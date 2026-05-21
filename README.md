@@ -1,28 +1,102 @@
 # EpiHack Auth Service
 
 Standalone FastAPI service for AWS Cognito authentication used by the EpiHack epidemic radar platform.
+Supports multiple frontend app clients from a single deployment.
 
-## Setup
+## Deploy to AWS Lambda (container image)
+
+### Prerequisites
+
+- AWS CLI configured (`aws configure`)
+- Docker running locally
+- IAM permissions for ECR and Lambda
+
+### 1. Build and push the image
+
+ECR repository: `arn:aws:ecr:us-east-2:206896361792:repository/epihack`
 
 ```bash
-cp .env.example .env   # fill in your Cognito values
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8001
+REPO=206896361792.dkr.ecr.us-east-2.amazonaws.com/epihack
+
+# Authenticate Docker to ECR
+aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 206896361792.dkr.ecr.us-east-2.amazonaws.com
+
+# Build for Lambda (amd64 required, provenance=false required)
+docker build --platform linux/amd64 --provenance=false -t epihack-auth .
+docker tag epihack-auth:latest $REPO:latest
+docker push $REPO:latest
 ```
 
-Interactive docs available at `http://localhost:8001/docs`.
+### 2. Create the Lambda function
+
+1. **Lambda → Create function → Container image**
+2. **Function name:** `epihack-auth`
+3. **Container image URI:** `206896361792.dkr.ecr.us-east-2.amazonaws.com/epihack:latest`
+4. **Architecture:** `x86_64`
+5. Click **Create function**
+
+### 3. Add environment variables
+
+In the Lambda console go to **Configuration → Environment variables** and add:
+
+| Key | Value |
+|---|---|
+| `ENVIRONMENT` | `production` |
+| `COGNITO_REGION` | `us-east-2` |
+| `COGNITO_USER_POOL_ID` | `us-east-2_YoX88Tklu` |
+| `COGNITO_CLIENT_IDS` | `<client-id-app1>,<client-id-app2>` |
+| `COGNITO_CLIENT_SECRETS` | `<secret-app1>,<secret-app2>` (blank entry if a client has no secret) |
+| `CORS_ORIGINS` | `https://your-frontend-domain.com` |
+
+> `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION` are reserved by Lambda and cannot be set. Credentials are provided automatically via the Lambda execution role.
+
+### 4. Grant Cognito permissions to the execution role
+
+The Lambda execution role needs permission to call Cognito. In **IAM → Roles → find the Lambda role → Add permissions**, attach:
+
+```
+arn:aws:iam::aws:policy/AmazonCognitoPowerUser
+```
+
+### 5. Add a Function URL (public HTTPS endpoint)
+
+1. **Configuration → Function URL → Create function URL**
+2. **Auth type:** `NONE`
+3. Copy the URL — your service is live at `https://<url-id>.lambda-url.us-east-2.on.aws`
+
+### 6. Redeploy after an image update
+
+```bash
+# Push a new image (see step 1), then update the function
+aws lambda update-function-code \
+  --function-name epihack-auth \
+  --image-uri 206896361792.dkr.ecr.us-east-2.amazonaws.com/epihack:latest \
+  --region us-east-2
+```
+
+---
+
+## Local Setup
+
+```bash
+cp .env .env.local   # edit with your local Cognito values
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8080
+```
+
+Interactive docs available at `http://localhost:8080/docs`.
+
+---
 
 ## Environment Variables
 
 | Variable | Required | Description |
 |---|---|---|
-| `AWS_ACCESS_KEY_ID` | No | AWS key (omit to use instance role / `AWS_PROFILE`) |
-| `AWS_SECRET_ACCESS_KEY` | No | AWS secret |
-| `AWS_REGION` | No | AWS region (default: `us-east-2`) |
+| `COGNITO_REGION` | No | AWS region for Cognito (default: `us-east-2`) |
 | `COGNITO_USER_POOL_ID` | Yes | Cognito User Pool ID (e.g. `us-east-2_XXXXXXXXX`) |
-| `COGNITO_CLIENT_ID` | Yes | App client ID |
-| `COGNITO_CLIENT_SECRET` | No | App client secret (leave blank if client has none) |
-| `COGNITO_AUTHORITY` | No | Override issuer URL (auto-derived from region + pool ID if blank) |
+| `COGNITO_CLIENT_IDS` | Yes | Comma-separated app client IDs, one per frontend |
+| `COGNITO_CLIENT_SECRETS` | No | Comma-separated secrets in the same order as IDs; leave entry blank if a client has no secret |
+| `COGNITO_AUTHORITY` | No | Override issuer URL (auto-derived from `COGNITO_REGION` + `COGNITO_USER_POOL_ID` if blank) |
 | `CORS_ORIGINS` | No | Comma-separated allowed origins (default: `http://localhost:5173`) |
 | `ENVIRONMENT` | No | `development` / `production` |
 
@@ -30,7 +104,7 @@ Interactive docs available at `http://localhost:8001/docs`.
 
 ## API Reference
 
-All endpoints are prefixed with `/auth`.
+All endpoints are prefixed with `/auth`. Every request body requires a `client_id` field matching one of the registered app clients.
 
 ### Health
 
@@ -40,7 +114,7 @@ Returns service status.
 
 **Response `200`**
 ```json
-{ "status": "ok", "env": "development" }
+{ "status": "ok", "env": "production" }
 ```
 
 ---
@@ -54,6 +128,7 @@ Create a new user account. Cognito sends a verification code to the user's email
 **Request body**
 ```json
 {
+  "client_id": "<your-app-client-id>",
   "name": "Alice Smith",
   "email": "alice@example.com",
   "password": "Str0ng!Pass",
@@ -63,6 +138,7 @@ Create a new user account. Cognito sends a verification code to the user's email
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
+| `client_id` | string | Yes | Must match a registered app client |
 | `name` | string | Yes | Display name stored as `name` attribute |
 | `email` | string | Yes | Used as the Cognito username |
 | `password` | string | Yes | Must meet the User Pool's password policy |
@@ -77,9 +153,9 @@ Create a new user account. Cognito sends a verification code to the user's email
 
 | Status | Detail |
 |---|---|
+| `400` | Unknown client_id |
 | `409` | An account with this email already exists |
 | `422` | Password does not meet policy requirements |
-| `400` | Other Cognito error |
 
 ---
 
@@ -92,6 +168,7 @@ Submit the 6-digit verification code sent to the user's email after registration
 **Request body**
 ```json
 {
+  "client_id": "<your-app-client-id>",
   "email": "alice@example.com",
   "code": "123456"
 }
@@ -106,6 +183,7 @@ Submit the 6-digit verification code sent to the user's email after registration
 
 | Status | Detail |
 |---|---|
+| `400` | Unknown client_id |
 | `400` | Invalid verification code |
 | `400` | Verification code has expired — request a new one |
 
@@ -119,7 +197,10 @@ Re-send the email verification code for an unconfirmed account.
 
 **Request body**
 ```json
-{ "email": "alice@example.com" }
+{
+  "client_id": "<your-app-client-id>",
+  "email": "alice@example.com"
+}
 ```
 
 **Response `200`**
@@ -138,6 +219,7 @@ Authenticate and receive tokens.
 **Request body**
 ```json
 {
+  "client_id": "<your-app-client-id>",
   "email": "alice@example.com",
   "password": "Str0ng!Pass"
 }
@@ -164,6 +246,7 @@ Authenticate and receive tokens.
 
 | Status | Detail |
 |---|---|
+| `400` | Unknown client_id |
 | `401` | Invalid email or password |
 | `403` | Please confirm your email before signing in |
 
@@ -178,12 +261,11 @@ Exchange a refresh token for a new `id_token` and `access_token` without re-ente
 **Request body**
 ```json
 {
-  "refresh_token": "<opaque>",
-  "email": "alice@example.com"
+  "client_id": "<your-app-client-id>",
+  "email": "alice@example.com",
+  "refresh_token": "<opaque>"
 }
 ```
-
-> `email` is required only when the Cognito app client has a secret (needed to compute `SECRET_HASH`). It can be omitted otherwise.
 
 **Response `200`**
 ```json
@@ -199,6 +281,7 @@ Exchange a refresh token for a new `id_token` and `access_token` without re-ente
 
 | Status | Detail |
 |---|---|
+| `400` | Unknown client_id |
 | `401` | Refresh token is invalid or expired |
 
 ---
@@ -238,7 +321,10 @@ Trigger the password-reset flow. Cognito sends a reset code to the user's email.
 
 **Request body**
 ```json
-{ "email": "alice@example.com" }
+{
+  "client_id": "<your-app-client-id>",
+  "email": "alice@example.com"
+}
 ```
 
 **Response `200`**
@@ -257,6 +343,7 @@ Complete the password-reset flow by submitting the reset code and the new passwo
 **Request body**
 ```json
 {
+  "client_id": "<your-app-client-id>",
   "email": "alice@example.com",
   "code": "123456",
   "new_password": "N3wStr0ng!Pass"
@@ -272,6 +359,7 @@ Complete the password-reset flow by submitting the reset code and the new passwo
 
 | Status | Detail |
 |---|---|
+| `400` | Unknown client_id |
 | `400` | Invalid reset code |
 | `400` | Reset code has expired — request a new one |
 | `422` | New password does not meet policy requirements |
@@ -321,4 +409,4 @@ async def protected(current_user: dict = Depends(get_current_user)):
     return {"email": current_user["email"]}
 ```
 
-Tokens are validated against the Cognito User Pool's public JWKS keys (RS256). Keys are fetched lazily on first use and refreshed automatically on key-ID cache miss to handle Cognito key rotation.
+Tokens are validated against the Cognito User Pool's public JWKS keys (RS256). Keys are fetched lazily on first use and refreshed automatically on key-ID cache miss to handle Cognito key rotation. Tokens from any registered app client are accepted.

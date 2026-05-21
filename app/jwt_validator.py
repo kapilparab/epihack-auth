@@ -14,6 +14,7 @@ class _JWKSValidator:
     """
     Validates Cognito id_tokens (RS256) using the pool's JWKS endpoint.
     Keys are fetched lazily and refreshed on key-ID cache miss to handle rotation.
+    Accepts tokens issued for any registered app client.
     """
 
     def __init__(self) -> None:
@@ -31,11 +32,12 @@ class _JWKSValidator:
             self._refresh()
         if kid not in self._keys:
             raise JWTError(f"Unknown signing key: {kid}")
+        # Accept tokens from any registered app client
         return jose_jwt.decode(
             token,
             self._keys[kid],
             algorithms=["RS256"],
-            audience=_settings.COGNITO_CLIENT_ID,
+            audience=_settings.allowed_client_ids,
             issuer=_settings.cognito_authority,
         )
 

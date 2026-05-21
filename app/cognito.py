@@ -10,24 +10,23 @@ _settings = get_settings()
 
 client = boto3.client(
     "cognito-idp",
-    region_name=_settings.AWS_REGION,
-    aws_access_key_id=_settings.AWS_ACCESS_KEY_ID or None,
-    aws_secret_access_key=_settings.AWS_SECRET_ACCESS_KEY or None,
+    region_name=_settings.COGNITO_REGION,
 )
 
 
-def secret_hash(username: str) -> str | None:
-    """Compute the HMAC-SHA256 SECRET_HASH Cognito requires when the app client has a secret."""
-    if not _settings.COGNITO_CLIENT_SECRET:
+def secret_hash(username: str, client_id: str) -> str | None:
+    """Compute the HMAC-SHA256 SECRET_HASH for the given app client."""
+    client_secret = _settings.cognito_clients.get(client_id, "")
+    if not client_secret:
         return None
-    msg = (username + _settings.COGNITO_CLIENT_ID).encode()
-    key = _settings.COGNITO_CLIENT_SECRET.encode()
+    msg = (username + client_id).encode()
+    key = client_secret.encode()
     return base64.b64encode(hmac.new(key, msg=msg, digestmod=hashlib.sha256).digest()).decode()
 
 
-def auth_params(username: str, extra: dict) -> dict:
+def auth_params(username: str, client_id: str, extra: dict) -> dict:
     params = {"USERNAME": username, **extra}
-    h = secret_hash(username)
+    h = secret_hash(username, client_id)
     if h:
         params["SECRET_HASH"] = h
     return params

@@ -6,14 +6,22 @@ from app.config import get_settings
 from app.jwt_validator import get_current_user
 
 _settings = get_settings()
-_CLIENT_ID = _settings.COGNITO_CLIENT_ID
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+# ── Helpers ──────────────────────────────────────────────────────
+
+def _validate_client(client_id: str) -> None:
+    """Raise 400 if client_id is not in the registered allow-list."""
+    if client_id not in _settings.allowed_client_ids:
+        raise HTTPException(status_code=400, detail=f"Unknown client_id: {client_id}")
 
 
 # ── Request models ───────────────────────────────────────────────
 
 class RegisterRequest(BaseModel):
+    client_id: str
     name: str
     email: EmailStr
     password: str
@@ -21,29 +29,35 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    client_id: str
     email: EmailStr
     password: str
 
 
 class ConfirmRequest(BaseModel):
+    client_id: str
     email: EmailStr
     code: str
 
 
 class ResendConfirmationRequest(BaseModel):
+    client_id: str
     email: EmailStr
 
 
 class RefreshRequest(BaseModel):
+    client_id: str
     refresh_token: str
     email: EmailStr
 
 
 class ForgotPasswordRequest(BaseModel):
+    client_id: str
     email: EmailStr
 
 
 class ConfirmForgotPasswordRequest(BaseModel):
+    client_id: str
     email: EmailStr
     code: str
     new_password: str
@@ -54,10 +68,11 @@ class ConfirmForgotPasswordRequest(BaseModel):
 @router.post("/register", status_code=201)
 async def register(req: RegisterRequest):
     """Create a new Cognito user. Returns whether email confirmation is pending."""
+    _validate_client(req.client_id)
     try:
-        sh = secret_hash(req.email)
+        sh = secret_hash(req.email, req.client_id)
         kwargs: dict = dict(
-            ClientId=_CLIENT_ID,
+            ClientId=req.client_id,
             Username=req.email,
             Password=req.password,
             UserAttributes=[
@@ -81,10 +96,11 @@ async def register(req: RegisterRequest):
 @router.post("/confirm")
 async def confirm(req: ConfirmRequest):
     """Confirm a user's email address with the verification code sent by Cognito."""
+    _validate_client(req.client_id)
     try:
-        sh = secret_hash(req.email)
+        sh = secret_hash(req.email, req.client_id)
         kwargs: dict = dict(
-            ClientId=_CLIENT_ID,
+            ClientId=req.client_id,
             Username=req.email,
             ConfirmationCode=req.code,
         )
@@ -103,9 +119,10 @@ async def confirm(req: ConfirmRequest):
 @router.post("/resend-confirmation")
 async def resend_confirmation(req: ResendConfirmationRequest):
     """Resend the email verification code."""
+    _validate_client(req.client_id)
     try:
-        sh = secret_hash(req.email)
-        kwargs: dict = dict(ClientId=_CLIENT_ID, Username=req.email)
+        sh = secret_hash(req.email, req.client_id)
+        kwargs: dict = dict(ClientId=req.client_id, Username=req.email)
         if sh:
             kwargs["SecretHash"] = sh
         client.resend_confirmation_code(**kwargs)
@@ -117,11 +134,12 @@ async def resend_confirmation(req: ResendConfirmationRequest):
 @router.post("/login")
 async def login(req: LoginRequest):
     """Authenticate with Cognito USER_PASSWORD_AUTH flow. Returns id, access, and refresh tokens."""
+    _validate_client(req.client_id)
     try:
         resp = client.initiate_auth(
             AuthFlow="USER_PASSWORD_AUTH",
-            AuthParameters=auth_params(req.email, {"PASSWORD": req.password}),
-            ClientId=_CLIENT_ID,
+            AuthParameters=auth_params(req.email, req.client_id, {"PASSWORD": req.password}),
+            ClientId=req.client_id,
         )
         result = resp["AuthenticationResult"]
         return {
@@ -144,15 +162,16 @@ async def login(req: LoginRequest):
 @router.post("/refresh")
 async def refresh(req: RefreshRequest):
     """Exchange a refresh token for a new id_token and access_token."""
+    _validate_client(req.client_id)
     try:
-        params = {"REFRESH_TOKEN": req.refresh_token}
-        sh = secret_hash(req.email)
+        params: dict = {"REFRESH_TOKEN": req.refresh_token}
+        sh = secret_hash(req.email, req.client_id)
         if sh:
             params["SECRET_HASH"] = sh
         resp = client.initiate_auth(
             AuthFlow="REFRESH_TOKEN_AUTH",
             AuthParameters=params,
-            ClientId=_CLIENT_ID,
+            ClientId=req.client_id,
         )
         result = resp["AuthenticationResult"]
         return {
@@ -165,28 +184,6 @@ async def refresh(req: RefreshRequest):
         raise HTTPException(status_code=401, detail="Refresh token is invalid or expired")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.post("/logout")
-async def logout(current_user: dict = Depends(get_current_user)):
-    """
-    Invalidate all tokens for the current user (global sign-out).
-    Requires a valid access_token in the Authorization: Bearer header.
-    Note: pass the access_token here, not the id_token.
-    """
-    try:
-        # get_current_user validates the id_token; for global_sign_out we need
-        # the access_token which is not parsed here — the client must send it
-        # separately. We accept it as a query param to keep it out of logs.
-        raise HTTPException(
-            status_code=501,
-            detail=(
-                "Pass the access_token directly to /auth/logout-with-token. "
-                "global_sign_out requires the access_token, not the id_token."
-            ),
-        )
-    except HTTPException:
-        raise
 
 
 @router.post("/logout-with-token")
@@ -207,16 +204,16 @@ async def logout_with_token(access_token: str):
 @router.post("/forgot-password")
 async def forgot_password(req: ForgotPasswordRequest):
     """Trigger the Cognito forgot-password flow. Sends a reset code to the user's email."""
+    _validate_client(req.client_id)
     try:
-        sh = secret_hash(req.email)
-        kwargs: dict = dict(ClientId=_CLIENT_ID, Username=req.email)
+        sh = secret_hash(req.email, req.client_id)
+        kwargs: dict = dict(ClientId=req.client_id, Username=req.email)
         if sh:
             kwargs["SecretHash"] = sh
         client.forgot_password(**kwargs)
         return {"code_sent": True}
     except client.exceptions.UserNotFoundException:
-        # Don't reveal whether the account exists
-        return {"code_sent": True}
+        return {"code_sent": True}  # don't reveal whether the account exists
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -224,10 +221,11 @@ async def forgot_password(req: ForgotPasswordRequest):
 @router.post("/confirm-forgot-password")
 async def confirm_forgot_password(req: ConfirmForgotPasswordRequest):
     """Complete the forgot-password flow by submitting the reset code and new password."""
+    _validate_client(req.client_id)
     try:
-        sh = secret_hash(req.email)
+        sh = secret_hash(req.email, req.client_id)
         kwargs: dict = dict(
-            ClientId=_CLIENT_ID,
+            ClientId=req.client_id,
             Username=req.email,
             ConfirmationCode=req.code,
             Password=req.new_password,
@@ -250,9 +248,9 @@ async def confirm_forgot_password(req: ConfirmForgotPasswordRequest):
 async def me(current_user: dict = Depends(get_current_user)):
     """Return the claims from the validated id_token."""
     return {
-        "sub":   current_user.get("sub"),
-        "email": current_user.get("email"),
-        "name":  current_user.get("name"),
-        "role":  current_user.get("custom:role"),
+        "sub":    current_user.get("sub"),
+        "email":  current_user.get("email"),
+        "name":   current_user.get("name"),
+        "role":   current_user.get("custom:role"),
         "groups": current_user.get("cognito:groups", []),
     }

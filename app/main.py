@@ -1,3 +1,4 @@
+from mangum import Mangum
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -28,3 +29,6 @@ app.include_router(auth.router)
 @app.get("/health", tags=["Health"])
 async def health():
     return {"status": "ok", "env": settings.ENVIRONMENT}
+
+
+handler = Mangum(app)
