@@ -132,7 +132,8 @@ Create a new user account. Cognito sends a verification code to the user's email
   "name": "Alice Smith",
   "email": "alice@example.com",
   "password": "Str0ng!Pass",
-  "role": "citizen"
+  "role": "citizen",
+  "phone_number": "+12025551234"
 }
 ```
 
@@ -143,6 +144,7 @@ Create a new user account. Cognito sends a verification code to the user's email
 | `email` | string | Yes | Used as the Cognito username |
 | `password` | string | Yes | Must meet the User Pool's password policy |
 | `role` | string | No | Stored as `custom:role` (default: `citizen`) |
+| `phone_number` | string | No | Must be in E.164 format, e.g. `+12025551234` |
 
 **Response `201`**
 ```json

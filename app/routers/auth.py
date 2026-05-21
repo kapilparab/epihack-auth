@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
+import re
 
 from app.cognito import auth_params, client, secret_hash
 from app.config import get_settings
@@ -26,6 +27,16 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     role: str = "citizen"
+    phone_number: str | None = None
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not re.fullmatch(r"\+[1-9]\d{6,14}", v):
+            raise ValueError("phone_number must be in E.164 format, e.g. +12025551234")
+        return v
 
 
 class LoginRequest(BaseModel):
@@ -76,9 +87,10 @@ async def register(req: RegisterRequest):
             Username=req.email,
             Password=req.password,
             UserAttributes=[
-                {"Name": "email",       "Value": req.email},
-                {"Name": "name",        "Value": req.name},
-                {"Name": "custom:role", "Value": req.role},
+                {"Name": "email",        "Value": req.email},
+                {"Name": "name",         "Value": req.name},
+                {"Name": "custom:role",  "Value": req.role},
+                *([{"Name": "phone_number", "Value": req.phone_number}] if req.phone_number else []),
             ],
         )
         if sh:
