@@ -27,17 +27,26 @@ class _JWKSValidator:
         self._keys = {k["kid"]: k for k in resp.json()["keys"]}
 
     def decode(self, token: str) -> dict:
-        kid = jose_jwt.get_unverified_headers(token).get("kid", "")
+        headers = jose_jwt.get_unverified_headers(token)
+        claims = jose_jwt.get_unverified_claims(token)
+
+        kid = headers.get("kid", "")
         if kid not in self._keys:
             self._refresh()
         if kid not in self._keys:
             raise JWTError(f"Unknown signing key: {kid}")
-        # Accept tokens from any registered app client
+
+        # python-jose only accepts a string audience — validate the claim
+        # against our allowlist first, then pass it through for signature check.
+        aud = claims.get("aud")
+        if aud not in _settings.allowed_client_ids:
+            raise JWTError(f"Token audience '{aud}' is not a registered client")
+
         return jose_jwt.decode(
             token,
             self._keys[kid],
             algorithms=["RS256"],
-            audience=_settings.allowed_client_ids,
+            audience=aud,
             issuer=_settings.cognito_authority,
         )
 
@@ -50,6 +59,9 @@ async def get_current_user(token: str = Depends(_oauth2)) -> dict:
     try:
         return _validator.decode(token)
     except Exception as exc:
+        print(f"[jwt] validation failed — {type(exc).__name__}: {exc}")
+        print(f"[jwt] authority={_settings.cognito_authority}")
+        print(f"[jwt] allowed_client_ids={_settings.allowed_client_ids}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
