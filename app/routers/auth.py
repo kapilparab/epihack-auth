@@ -74,6 +74,37 @@ class ConfirmForgotPasswordRequest(BaseModel):
     new_password: str
 
 
+class UserAttributesRequest(BaseModel):
+    # user fields
+    name: str | None = None
+    email: EmailStr | None = None
+    role: str | None = None
+    # demographics
+    sex: str | None = None
+    birthday: str | None = None
+    language: str | None = None
+    # household
+    num_household_members: int | None = None
+    home_zips: str | None = None
+    pets: str | None = None
+    backyard_water_flag: bool | None = None
+    # occupation
+    works_flag: bool | None = None
+    goes_to_school_flag: bool | None = None
+    outdoor_worker_flag: bool | None = None
+    # contact
+    phone_number: str | None = None
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not re.fullmatch(r"\+[1-9]\d{6,14}", v):
+            raise ValueError("phone_number must be in E.164 format, e.g. +12025551234")
+        return v
+
+
 # ── Endpoints ────────────────────────────────────────────────────
 
 @router.post("/register", status_code=201)
@@ -266,3 +297,59 @@ async def me(current_user: dict = Depends(get_current_user)):
         "role":   current_user.get("custom:role"),
         "groups": current_user.get("cognito:groups", []),
     }
+
+
+# user profile management (update attributes, change password, etc.) can be added here as needed
+
+@router.post("/user-attributes")
+async def update_user_attributes(req: UserAttributesRequest, current_user: dict = Depends(get_current_user)):
+    """Update authenticated user's attributes in Cognito."""
+    user_email = current_user.get("email")
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Could not identify user")
+    
+    try:
+        # Build the list of attributes to update
+        user_attributes = []
+        if req.name is not None:
+            user_attributes.append({"Name": "name", "Value": req.name})
+        if req.email is not None:
+            user_attributes.append({"Name": "email", "Value": req.email})
+        if req.role is not None:
+            user_attributes.append({"Name": "custom:role", "Value": req.role})
+        if req.sex is not None:
+            user_attributes.append({"Name": "custom:sex", "Value": req.sex})
+        if req.birthday is not None:
+            user_attributes.append({"Name": "birthdate", "Value": req.birthday})
+        if req.language is not None:
+            user_attributes.append({"Name": "locale", "Value": req.language})
+        if req.num_household_members is not None:
+            user_attributes.append({"Name": "custom:num_household_members", "Value": str(req.num_household_members)})
+        if req.home_zips is not None:
+            user_attributes.append({"Name": "custom:home_zips", "Value": req.home_zips})
+        if req.pets is not None:
+            user_attributes.append({"Name": "custom:pets", "Value": req.pets})
+        if req.backyard_water_flag is not None:
+            user_attributes.append({"Name": "custom:backyard_water_flag", "Value": str(req.backyard_water_flag).lower()})
+        if req.works_flag is not None:
+            user_attributes.append({"Name": "custom:works_flag", "Value": str(req.works_flag).lower()})
+        if req.goes_to_school_flag is not None:
+            user_attributes.append({"Name": "custom:goes_to_school_flag", "Value": str(req.goes_to_school_flag).lower()})
+        if req.outdoor_worker_flag is not None:
+            user_attributes.append({"Name": "custom:outdoor_worker_flag", "Value": str(req.outdoor_worker_flag).lower()})
+        if req.phone_number is not None:
+            user_attributes.append({"Name": "phone_number", "Value": req.phone_number})
+        
+        if not user_attributes:
+            raise HTTPException(status_code=400, detail="No attributes to update")
+        
+        # Update user attributes in Cognito
+        client.admin_update_user_attributes(
+            UserPoolId=_settings.COGNITO_USER_POOL_ID,
+            Username=user_email,
+            UserAttributes=user_attributes,
+        )
+        
+        return {"updated": True}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
