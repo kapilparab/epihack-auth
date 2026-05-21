@@ -299,6 +299,61 @@ async def me(current_user: dict = Depends(get_current_user)):
     }
 
 
+# Maps Cognito attribute names → response field names
+_COGNITO_ATTR_MAP = {
+    "sub":                              "sub",
+    "email":                            "email",
+    "name":                             "name",
+    "phone_number":                     "phone_number",
+    "birthdate":                        "birthday",
+    "locale":                           "language",
+    "custom:role":                      "role",
+    "custom:sex":                       "sex",
+    "custom:num_household_mem":     "num_household_members",
+    "custom:home_zips":                 "home_zips",
+    "custom:pets":                      "pets",
+    "custom:backyard_water_flag":       "backyard_water_flag",
+    "custom:works_flag":                "works_flag",
+    "custom:goes_to_school_flag":       "goes_to_school_flag",
+    "custom:outdoor_worker_flag":       "outdoor_worker_flag",
+}
+
+# Attributes that should be cast from string to bool
+_BOOL_ATTRS = {
+    "backyard_water_flag", "works_flag", "goes_to_school_flag", "outdoor_worker_flag"
+}
+
+
+@router.get("/user")
+async def get_user(current_user: dict = Depends(get_current_user)):
+    """Fetch the current user's full profile from Cognito."""
+    email = current_user.get("email")
+    if not email:
+        raise HTTPException(status_code=401, detail="Could not identify user")
+    try:
+        resp = client.admin_get_user(
+            UserPoolId=_settings.COGNITO_USER_POOL_ID,
+            Username=email,
+        )
+        attrs = {a["Name"]: a["Value"] for a in resp.get("UserAttributes", [])}
+        user: dict = {}
+        for cognito_key, field in _COGNITO_ATTR_MAP.items():
+            value = attrs.get(cognito_key)
+            if value is not None:
+                if field in _BOOL_ATTRS:
+                    value = value.lower() == "true"
+                elif field == "num_household_members":
+                    value = int(value)
+                user[field] = value
+        user["enabled"] = resp.get("Enabled", True)
+        user["status"] = resp.get("UserStatus")
+        return user
+    except client.exceptions.UserNotFoundException:
+        raise HTTPException(status_code=404, detail="User not found")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 # user profile management (update attributes, change password, etc.) can be added here as needed
 
 @router.post("/user-attributes")
@@ -324,7 +379,7 @@ async def update_user_attributes(req: UserAttributesRequest, current_user: dict 
         if req.language is not None:
             user_attributes.append({"Name": "locale", "Value": req.language})
         if req.num_household_members is not None:
-            user_attributes.append({"Name": "custom:num_household_members", "Value": str(req.num_household_members)})
+            user_attributes.append({"Name": "custom:num_household_mem", "Value": str(req.num_household_members)})
         if req.home_zips is not None:
             user_attributes.append({"Name": "custom:home_zips", "Value": req.home_zips})
         if req.pets is not None:

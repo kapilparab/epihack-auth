@@ -368,11 +368,11 @@ Complete the password-reset flow by submitting the reset code and the new passwo
 
 ---
 
-### Current User
+### Current User (from token)
 
 #### `GET /auth/me`
 
-Decode the id_token and return the current user's claims.
+Decode the id_token and return a subset of claims. Fast — no Cognito API call.
 
 **Headers**
 ```
@@ -395,6 +395,51 @@ Authorization: Bearer <id_token>
 | Status | Detail |
 |---|---|
 | `401` | Could not validate credentials |
+
+---
+
+### User Profile (from Cognito)
+
+#### `GET /auth/user`
+
+Fetch the current user's full profile directly from Cognito, including all custom attributes.
+
+**Headers**
+```
+Authorization: Bearer <id_token>
+```
+
+**Response `200`**
+```json
+{
+  "sub": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "email": "alice@example.com",
+  "name": "Alice Smith",
+  "phone_number": "+12025551234",
+  "birthday": "1990-01-15",
+  "language": "en",
+  "role": "citizen",
+  "sex": "female",
+  "num_household_members": 3,
+  "home_zips": "90210",
+  "pets": "dog,cat",
+  "backyard_water_flag": false,
+  "works_flag": true,
+  "goes_to_school_flag": false,
+  "outdoor_worker_flag": false,
+  "enabled": true,
+  "status": "CONFIRMED"
+}
+```
+
+Only attributes that have been set are included in the response.
+
+**Error responses**
+
+| Status | Detail |
+|---|---|
+| `401` | Could not validate credentials |
+| `404` | User not found |
 
 ---
 
