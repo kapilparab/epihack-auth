@@ -1,9 +1,11 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
 
 _ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+_IS_LAMBDA = "LAMBDA_TASK_ROOT" in os.environ
 
 
 class Settings(BaseSettings):
@@ -47,7 +49,7 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.CORS_ORIGINS.split(",")]
 
     class Config:
-        env_file = str(_ENV_FILE)
+        env_file = None if _IS_LAMBDA else str(_ENV_FILE)
         case_sensitive = True
 
 
