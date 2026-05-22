@@ -133,7 +133,10 @@ Create a new user account. Cognito sends a verification code to the user's email
   "email": "alice@example.com",
   "password": "Str0ng!Pass",
   "role": "citizen",
-  "phone_number": "+12025551234"
+  "phone_number": "+12025551234",
+  "age": 30,
+  "address": "123 Main St, Springfield",
+  "occupation": "Engineer"
 }
 ```
 
@@ -145,6 +148,9 @@ Create a new user account. Cognito sends a verification code to the user's email
 | `password` | string | Yes | Must meet the User Pool's password policy |
 | `role` | string | No | Stored as `custom:role` (default: `citizen`) |
 | `phone_number` | string | No | Must be in E.164 format, e.g. `+12025551234` |
+| `age` | integer | No | Stored as `custom:age` |
+| `address` | string | No | Stored as standard `address` attribute |
+| `occupation` | string | No | Stored as `custom:occupation` |
 
 **Response `201`**
 ```json
@@ -416,10 +422,13 @@ Authorization: Bearer <id_token>
   "email": "alice@example.com",
   "name": "Alice Smith",
   "phone_number": "+12025551234",
+  "address": "123 Main St, Springfield",
   "birthday": "1990-01-15",
   "language": "en",
   "role": "citizen",
+  "age": 30,
   "sex": "female",
+  "occupation": "Engineer",
   "num_household_members": 3,
   "home_zips": "90210",
   "pets": "dog,cat",

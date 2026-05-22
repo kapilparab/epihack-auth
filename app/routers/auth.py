@@ -28,6 +28,9 @@ class RegisterRequest(BaseModel):
     password: str
     role: str = "citizen"
     phone_number: str | None = None
+    age: int | None = None
+    address: str | None = None
+    occupation: str | None = None
 
     @field_validator("phone_number")
     @classmethod
@@ -80,15 +83,19 @@ class UserAttributesRequest(BaseModel):
     email: EmailStr | None = None
     role: str | None = None
     # demographics
+    age: int | None = None
     sex: str | None = None
     birthday: str | None = None
     language: str | None = None
+    # address
+    address: str | None = None
     # household
     num_household_members: int | None = None
     home_zips: str | None = None
     pets: str | None = None
     backyard_water_flag: bool | None = None
     # occupation
+    occupation: str | None = None
     works_flag: bool | None = None
     goes_to_school_flag: bool | None = None
     outdoor_worker_flag: bool | None = None
@@ -118,10 +125,13 @@ async def register(req: RegisterRequest):
             Username=req.email,
             Password=req.password,
             UserAttributes=[
-                {"Name": "email",        "Value": req.email},
-                {"Name": "name",         "Value": req.name},
-                {"Name": "custom:role",  "Value": req.role},
-                *([{"Name": "phone_number", "Value": req.phone_number}] if req.phone_number else []),
+                {"Name": "email",              "Value": req.email},
+                {"Name": "name",               "Value": req.name},
+                {"Name": "custom:role",        "Value": req.role},
+                *([{"Name": "phone_number",    "Value": req.phone_number}]    if req.phone_number is not None else []),
+                *([{"Name": "custom:age",      "Value": str(req.age)}]        if req.age         is not None else []),
+                *([{"Name": "address",         "Value": req.address}]         if req.address     is not None else []),
+                *([{"Name": "custom:occupation","Value": req.occupation}]     if req.occupation  is not None else []),
             ],
         )
         if sh:
@@ -305,11 +315,14 @@ _COGNITO_ATTR_MAP = {
     "email":                            "email",
     "name":                             "name",
     "phone_number":                     "phone_number",
+    "address":                          "address",
     "birthdate":                        "birthday",
     "locale":                           "language",
     "custom:role":                      "role",
+    "custom:age":                       "age",
     "custom:sex":                       "sex",
-    "custom:num_household_mem":     "num_household_members",
+    "custom:occupation":                "occupation",
+    "custom:num_household_mem":         "num_household_members",
     "custom:home_zips":                 "home_zips",
     "custom:pets":                      "pets",
     "custom:backyard_water_flag":       "backyard_water_flag",
@@ -318,10 +331,11 @@ _COGNITO_ATTR_MAP = {
     "custom:outdoor_worker_flag":       "outdoor_worker_flag",
 }
 
-# Attributes that should be cast from string to bool
-_BOOL_ATTRS = {
-    "backyard_water_flag", "works_flag", "goes_to_school_flag", "outdoor_worker_flag"
-}
+# Attributes cast from Cognito strings to int
+_INT_ATTRS = {"age", "num_household_members"}
+
+# Attributes cast from Cognito strings to bool
+_BOOL_ATTRS = {"backyard_water_flag", "works_flag", "goes_to_school_flag", "outdoor_worker_flag"}
 
 
 @router.get("/user")
@@ -342,7 +356,7 @@ async def get_user(current_user: dict = Depends(get_current_user)):
             if value is not None:
                 if field in _BOOL_ATTRS:
                     value = value.lower() == "true"
-                elif field == "num_household_members":
+                elif field in _INT_ATTRS:
                     value = int(value)
                 user[field] = value
         user["enabled"] = resp.get("Enabled", True)
@@ -372,6 +386,8 @@ async def update_user_attributes(req: UserAttributesRequest, current_user: dict 
             user_attributes.append({"Name": "email", "Value": req.email})
         if req.role is not None:
             user_attributes.append({"Name": "custom:role", "Value": req.role})
+        if req.age is not None:
+            user_attributes.append({"Name": "custom:age", "Value": str(req.age)})
         if req.sex is not None:
             user_attributes.append({"Name": "custom:sex", "Value": req.sex})
         if req.birthday is not None:
@@ -386,6 +402,10 @@ async def update_user_attributes(req: UserAttributesRequest, current_user: dict 
             user_attributes.append({"Name": "custom:pets", "Value": req.pets})
         if req.backyard_water_flag is not None:
             user_attributes.append({"Name": "custom:backyard_water_flag", "Value": str(req.backyard_water_flag).lower()})
+        if req.address is not None:
+            user_attributes.append({"Name": "address", "Value": req.address})
+        if req.occupation is not None:
+            user_attributes.append({"Name": "custom:occupation", "Value": req.occupation})
         if req.works_flag is not None:
             user_attributes.append({"Name": "custom:works_flag", "Value": str(req.works_flag).lower()})
         if req.goes_to_school_flag is not None:
